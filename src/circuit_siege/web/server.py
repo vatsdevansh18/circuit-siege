@@ -7,15 +7,25 @@ that every move is legal, and then applies the new move. Because nothing is kept
 in memory between requests, this works the same on one local process or on
 many serverless instances (Vercel).
 
+The match record is signed with an HMAC, so the browser can't hand the server a
+forged history (for example, "AI" moves it chose itself) that would then be
+logged as a real game and used for retraining. The key comes from the
+CIRCUIT_SIEGE_SECRET environment variable; without it, a local run uses a random
+key per process. On Vercel without the variable, records are unsigned, but
+nothing is logged there, so a forged history only affects the forger's own game.
+
 The browser never decides rules or AI moves. The AI move is computed here by
 ModelAgent using the saved model.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import random
+import secrets
 import time
 import uuid
 from pathlib import Path
@@ -38,15 +48,40 @@ class ApiError(Exception):
         self.message, self.status = message, status
 
 
+_AUTO = object()
+
+
 def create_app(model_path: Path | None = None, matches_path: Path | None = None,
-               seed: int | None = None, log_matches: bool | None = None) -> Flask:
-    """`log_matches` defaults to True locally and False on Vercel (read-only filesystem)."""
+               seed: int | None = None, log_matches: bool | None = None, secret=_AUTO) -> Flask:
+    """`log_matches` defaults to True locally and False on Vercel (read-only filesystem).
+
+    `secret` signs match records. By default it comes from CIRCUIT_SIEGE_SECRET, or a
+    random per-process key when running locally. None disables signing (tests only).
+    """
     app = Flask(__name__, static_folder=None)
     model_path = Path(model_path or paths.MODEL_PATH)
     matches_path = Path(matches_path or paths.PLAYER_MATCHES)
+    on_vercel = bool(os.environ.get("VERCEL"))
     if log_matches is None:
-        log_matches = not os.environ.get("VERCEL")
+        log_matches = not on_vercel
+    if secret is _AUTO:
+        secret = os.environ.get("CIRCUIT_SIEGE_SECRET") or (None if on_vercel else secrets.token_hex(32))
+    key = secret.encode() if isinstance(secret, str) else secret
+    if log_matches and key is None:
+        raise ValueError("logging matches requires signed match records; provide a secret")
     rng = random.Random(seed)
+
+    # Match ids already in the log, so a finished match is written only once even
+    # if its final request is sent again.
+    logged_ids: set[str] = set()
+    if log_matches and matches_path.exists():
+        for line in matches_path.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("match_id"), str):
+                logged_ids.add(rec["match_id"])
 
     try:
         bundle, model_error = load_bundle(model_path), None
@@ -80,7 +115,22 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
             raise ApiError("match.moves must be a list of at most 49 cells")
         if any(isinstance(x, bool) or not isinstance(x, int) for x in moves):
             raise ApiError("match.moves must contain integers")
-        return {"id": mid, "difficulty": diff, "first": first, "moves": list(moves)}
+        clean = {"id": mid, "difficulty": diff, "first": first, "moves": list(moves)}
+        if key is not None:
+            sig = m.get("sig")
+            if not isinstance(sig, str) or not hmac.compare_digest(sig, sign(clean)):
+                raise ApiError("match record was modified or comes from another server; start a new game", 403)
+        return clean
+
+    def sign(match: dict) -> str:
+        payload = json.dumps(match, sort_keys=True, separators=(",", ":"))
+        return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+
+    def signed(match: dict) -> dict:
+        out = {k: match[k] for k in ("id", "difficulty", "first", "moves")}
+        if key is not None:
+            out["sig"] = sign(out)
+        return out
 
     def replay(match: dict):
         """Rebuild every state of the match. Raises ApiError if any move is illegal."""
@@ -126,7 +176,7 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
                    "ai_win_prob": trace[k + 1]}
                   for k, cell in enumerate(match["moves"])]
         return {
-            "match": match,
+            "match": signed(match),
             "difficulty": match["difficulty"],
             "board": [v * HUMAN for v in st.board],  # +1 human, -1 AI, 0 empty
             "cores": sorted(CORES),
@@ -145,7 +195,7 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
 
     def log_match(match: dict, states, trace):
         """Append a finished match to the local log used for retraining."""
-        if not log_matches:
+        if not log_matches or match["id"] in logged_ids:
             return
         st = states[-1]
         s = st.scores()
@@ -166,6 +216,7 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
             matches_path.parent.mkdir(parents=True, exist_ok=True)
             with open(matches_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
+            logged_ids.add(match["id"])
         except OSError as exc:  # logging must never break the game
             app.logger.warning("could not log match: %s", exc)
 

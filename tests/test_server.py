@@ -58,12 +58,58 @@ def test_full_match_flow_logs_result(client):
 
 
 def test_stateless_across_server_instances(tiny_model_path, tmp_path):
-    """Like serverless hosting: consecutive requests hit different app instances."""
-    clients = [make_client(tiny_model_path, tmp_path / f"m{k}.jsonl", log_matches=False) for k in range(3)]
+    """Like serverless hosting: consecutive requests hit different app instances
+    that share the signing secret (CIRCUIT_SIEGE_SECRET)."""
+    clients = [make_client(tiny_model_path, tmp_path / f"m{k}.jsonl", log_matches=False, secret="shared")
+               for k in range(3)]
     g = clients[0].post("/api/new_game", json={"first": "ai"}).json
     g = play_out(clients, g, random.Random(3))
     assert g["over"] and len(g["match"]["moves"]) == 49
     assert not any((tmp_path / f"m{k}.jsonl").exists() for k in range(3))  # logging disabled
+
+
+def test_record_from_a_server_with_another_secret_is_rejected(tiny_model_path, tmp_path):
+    a = make_client(tiny_model_path, tmp_path / "a.jsonl", secret="one")
+    b = make_client(tiny_model_path, tmp_path / "b.jsonl", secret="two")
+    g = a.post("/api/new_game", json={"first": "human"}).json
+    assert b.post("/api/move", json={"match": g["match"], "cell": 0}).status_code == 403
+
+
+def test_forged_history_cannot_be_logged(client):
+    """A client can't invent its own 'AI' moves: any edit breaks the signature."""
+    g = client.post("/api/new_game", json={"first": "human"}).json
+    forged = dict(g["match"], moves=[0, 1])  # pretend the AI answered 0 with 1
+    r = client.post("/api/move", json={"match": forged, "cell": 2})
+    assert r.status_code == 403
+    no_sig = {k: v for k, v in g["match"].items() if k != "sig"}
+    assert client.post("/api/move", json={"match": no_sig, "cell": 2}).status_code == 403
+
+
+def test_finished_match_is_logged_only_once(tiny_model_path, tmp_path):
+    log = tmp_path / "matches.jsonl"
+    client = make_client(tiny_model_path, log, log_matches=True, secret="k")
+    rng = random.Random(9)
+    g = client.post("/api/new_game", json={"first": "human"}).json
+    while g["ply"] < 48:
+        g = step([client], g, rng)
+    final = {"match": g["match"]}
+    if g["to_move"] == "human":
+        final["cell"] = g["board"].index(0)
+        url = "/api/move"
+    else:
+        url = "/api/ai_move"
+    for _ in range(3):  # resend the final request
+        assert client.post(url, json=final).json["over"]
+    assert len(log.read_text().splitlines()) == 1
+    # a restarted server reads the existing log and still won't write it again
+    restarted = make_client(tiny_model_path, log, log_matches=True, secret="k")
+    assert restarted.post(url, json=final).json["over"]
+    assert len(log.read_text().splitlines()) == 1
+
+
+def test_logging_requires_signing(tiny_model_path, tmp_path):
+    with pytest.raises(ValueError):
+        create_app(model_path=tiny_model_path, matches_path=tmp_path / "m.jsonl", log_matches=True, secret=None)
 
 
 def test_logging_off_by_default_on_vercel(tiny_model_path, tmp_path, monkeypatch):
@@ -94,10 +140,12 @@ def test_wrong_turn_and_illegal_moves(client):
     assert client.post("/api/move", json={"match": g["match"], "cell": 10}).status_code == 400  # occupied
 
 
-def test_tampered_history_rejected(client):
-    g = client.post("/api/new_game", json={"first": "human"}).json
+def test_illegal_history_rejected_even_without_signing(tiny_model_path, tmp_path):
+    c = make_client(tiny_model_path, tmp_path / "m.jsonl", log_matches=False, secret=None)
+    g = c.post("/api/new_game", json={"first": "human"}).json
+    assert "sig" not in g["match"]
     m = dict(g["match"], moves=[5, 5])  # second move on an occupied cell
-    r = client.post("/api/ai_move", json={"match": m})
+    r = c.post("/api/ai_move", json={"match": m})
     assert r.status_code == 400 and "invalid" in r.json["error"]
 
 

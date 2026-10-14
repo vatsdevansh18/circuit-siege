@@ -39,7 +39,7 @@ the game works straight away. To rebuild everything from scratch:
 python scripts/generate_dataset.py   # simulate 8,000 games -> 384,000 positions (~1 min)
 python scripts/train_model.py        # train and compare 8 models, keep the best (~5 min)
 python scripts/evaluate_model.py     # test-set metrics, charts, AI vs bots (~12 min)
-python -m pytest                     # 81 tests
+python -m pytest                     # 85 tests
 ```
 
 All of it is seeded, so running these again gives the same dataset and the same splits.
@@ -209,6 +209,14 @@ replays them, which also checks that each one is legal. Then it applies the new 
 A whole game is only 49 moves, so this is fast. Match history is stored in the
 browser.
 
+The server signs the match record (HMAC), so a browser can't send back an edited
+history. Locally the key is random each time the server starts. On Vercel, you can
+optionally add an environment variable `CIRCUIT_SIEGE_SECRET` (any long random
+string) under Project Settings → Environment Variables. That turns signing on for the
+hosted version too. Without it the hosted game still works, but someone editing their
+own requests could only cheat in their own game, since the online version doesn't
+save matches anywhere.
+
 ## Project layout
 
 ```
@@ -235,14 +243,14 @@ Everything runs locally and doesn't need any API keys.
 
 ## Tests
 
-`python -m pytest` runs 81 tests. They cover:
+`python -m pytest` runs 85 tests. They cover:
 
 - the capture rules in every direction, illegal moves, scoring and game end
 - features matching between training and play, and the data checks
 - the split being by game
 - training, saving and loading the model, and missing or broken model files
 - the AI always choosing a legal move
-- the web API (full games, bad input, playing out of turn, edited move history,
+- the web API (full games, bad input, playing out of turn, edited or forged move history,
   requests landing on different server instances)
 - the retraining checks
 
