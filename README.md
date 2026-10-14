@@ -23,10 +23,14 @@ You need Python 3.10 or newer. I used 3.14 on Windows.
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # on Mac/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 python run_game.py              # opens http://127.0.0.1:5000
 ```
+
+`requirements.txt` only has what the game server needs (Flask, scikit-learn, NumPy,
+joblib). `requirements-dev.txt` adds pandas, matplotlib and pytest for training,
+evaluation and tests.
 
 The dataset, the trained model and the evaluation reports are already in the repo, so
 the game works straight away. To rebuild everything from scratch:
@@ -35,7 +39,7 @@ the game works straight away. To rebuild everything from scratch:
 python scripts/generate_dataset.py   # simulate 8,000 games -> 384,000 positions (~1 min)
 python scripts/train_model.py        # train and compare 8 models, keep the best (~5 min)
 python scripts/evaluate_model.py     # test-set metrics, charts, AI vs bots (~12 min)
-python -m pytest                     # 71 tests
+python -m pytest                     # 81 tests
 ```
 
 All of it is seeded, so running these again gives the same dataset and the same splits.
@@ -178,7 +182,9 @@ charts (confusion matrix, ROC, calibration, feature importance) are in
 
 The AI does not learn while you play. What it does instead:
 
-1. Every finished game is saved to `data/player_games/matches.jsonl`.
+1. When you run the game on your own computer, every finished game is saved to
+   `data/player_games/matches.jsonl`. (The online version can't write files, so it
+   only keeps your results in your browser.)
 2. When you want to, run `python scripts/retrain_with_player_data.py` (after at least 5
    games). It trains a new candidate model on the original data plus your games, then
    compares it with the current model on the test games and in 40 games head-to-head.
@@ -186,10 +192,28 @@ The AI does not learn while you play. What it does instead:
    `models/archive/` first, so you can always switch back. `--dry-run` runs the checks
    without replacing anything.
 
+## Deploying to Vercel
+
+The repo is ready to deploy as is:
+
+1. Go to [vercel.com/new](https://vercel.com/new) and import this GitHub repo.
+2. Leave the settings on their defaults and click **Deploy**.
+
+Vercel finds `app.py` in the root, which creates the Flask app, and installs
+`requirements.txt`. `.vercelignore` keeps the dataset, reports and tests out of the
+deployment, so only the game and the trained model get uploaded.
+
+To make this work on serverless hosting, the server doesn't keep any games in memory.
+The browser sends the list of moves played so far with every request, and the server
+replays them, which also checks that each one is legal. Then it applies the new move.
+A whole game is only 49 moves, so this is fast. Match history is stored in the
+browser.
+
 ## Project layout
 
 ```
-run_game.py                 start the game
+run_game.py                 start the game locally
+app.py                      entry point for Vercel / other WSGI hosts
 scripts/                    generate data, train, evaluate, retrain
 src/circuit_siege/
     game/                   the rules (no ML in here)
@@ -211,14 +235,15 @@ Everything runs locally and doesn't need any API keys.
 
 ## Tests
 
-`python -m pytest` runs 71 tests. They cover:
+`python -m pytest` runs 81 tests. They cover:
 
 - the capture rules in every direction, illegal moves, scoring and game end
 - features matching between training and play, and the data checks
 - the split being by game
 - training, saving and loading the model, and missing or broken model files
 - the AI always choosing a legal move
-- the web API (full games, bad input, playing out of turn)
+- the web API (full games, bad input, playing out of turn, edited move history,
+  requests landing on different server instances)
 - the retraining checks
 
 ## Limitations

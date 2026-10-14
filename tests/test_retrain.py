@@ -62,3 +62,13 @@ def test_promotion_rule():
     assert not should_promote(cur, {"test_log_loss": 0.44}, bad_arena)[0]
     assert not should_promote({"test_log_loss": 0.45, "player_log_loss": 0.5},
                               {"test_log_loss": 0.45, "player_log_loss": 0.6}, good_arena)[0]
+
+
+def test_duplicate_match_ids_are_skipped(tmp_path):
+    p = tmp_path / "m.jsonl"
+    write_matches(p, 1)
+    line = json.loads(p.read_text().strip())
+    line["match_id"] = "abc"
+    p.write_text((json.dumps(line) + "\n") * 2 + "[1, 2]\n")
+    recs, skipped = load_player_matches(p)
+    assert len(recs) == 1 and skipped == 2

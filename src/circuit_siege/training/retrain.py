@@ -30,10 +30,17 @@ def load_player_matches(path: Path) -> tuple[list[dict], int]:
     path = Path(path)
     if not path.exists():
         return [], 0
-    records, skipped = [], 0
+    records, skipped, seen = [], 0, set()
     for k, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
         try:
             m = json.loads(line)
+            if not isinstance(m, dict):
+                raise ValueError("not a match record")
+            mid = m.get("match_id")
+            if mid is not None:
+                if mid in seen:  # the same match logged twice
+                    raise ValueError("duplicate match")
+                seen.add(mid)
             human = int(m["human_side"])
             first = int(m["first_player"])
             moves = [int(x) for x in m["moves"]]

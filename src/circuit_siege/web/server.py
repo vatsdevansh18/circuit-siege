@@ -1,47 +1,35 @@
-"""Local Flask server: hosts the UI and runs authoritative game sessions.
+"""Flask server: hosts the UI and runs the game rules and the AI.
 
-The browser never decides rules or AI moves. It sends the human's chosen cell,
-and the server validates it with the engine. The AI move is computed here by
+The server is stateless. The browser keeps the match as a small record
+(id, difficulty, who moved first, list of moves) and sends it with every
+request. The server replays the moves with the engine, which also re-checks
+that every move is legal, and then applies the new move. Because nothing is kept
+in memory between requests, this works the same on one local process or on
+many serverless instances (Vercel).
+
+The browser never decides rules or AI moves. The AI move is computed here by
 ModelAgent using the saved model.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import random
-import threading
 import time
 import uuid
-from collections import OrderedDict
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
+from ..ai.features import extract_features
 from ..ai.model_agent import DIFFICULTIES, ModelAgent
-from ..ai.model_io import ModelIncompatibleError, ModelNotFoundError, load_bundle
-from ..game.engine import CORES, P1, P2, GameState, IllegalMoveError, apply_move, flips_for, new_game
+from ..ai.model_io import ModelIncompatibleError, ModelNotFoundError, load_bundle, predict_win_proba
+from ..game.engine import CORES, N_CELLS, P1, P2, IllegalMoveError, apply_move, flips_for, new_game
 from ..utils import paths
 
 STATIC_DIR = Path(__file__).parent / "static"
-MAX_SESSIONS = 200
-
-
-@dataclass
-class Match:
-    id: str
-    difficulty: str
-    human: int
-    state: GameState
-    agent: ModelAgent
-    started_at: float = field(default_factory=time.time)
-    events: list = field(default_factory=list)       # per-move log for the UI and the match file
-    prob_trace: list = field(default_factory=list)   # model P(AI wins) after every move
-    logged: bool = False
-
-    @property
-    def ai(self) -> int:
-        return -self.human
+HUMAN, AI = P1, P2  # the human always plays colour +1; who moves first varies
 
 
 class ApiError(Exception):
@@ -51,13 +39,14 @@ class ApiError(Exception):
 
 
 def create_app(model_path: Path | None = None, matches_path: Path | None = None,
-               seed: int | None = None) -> Flask:
+               seed: int | None = None, log_matches: bool | None = None) -> Flask:
+    """`log_matches` defaults to True locally and False on Vercel (read-only filesystem)."""
     app = Flask(__name__, static_folder=None)
     model_path = Path(model_path or paths.MODEL_PATH)
     matches_path = Path(matches_path or paths.PLAYER_MATCHES)
+    if log_matches is None:
+        log_matches = not os.environ.get("VERCEL")
     rng = random.Random(seed)
-    lock = threading.Lock()
-    matches: OrderedDict[str, Match] = OrderedDict()
 
     try:
         bundle, model_error = load_bundle(model_path), None
@@ -69,81 +58,109 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
         if bundle is None:
             raise ApiError(model_error or "model unavailable", 503)
 
-    def get_match(data) -> Match:
-        gid = data.get("game_id")
-        if not isinstance(gid, str) or gid not in matches:
-            raise ApiError("unknown or expired game_id", 404)
-        return matches[gid]
-
     def body() -> dict:
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             raise ApiError("request body must be a JSON object")
         return data
 
-    def ai_prob(m: Match) -> float:
-        return round(m.agent.position_win_prob(m.state, m.ai), 4)
+    def parse_match(data: dict) -> dict:
+        """Validate the match record sent by the browser."""
+        m = data.get("match")
+        if not isinstance(m, dict):
+            raise ApiError("missing 'match' record; start a new game")
+        mid, diff, first, moves = m.get("id"), m.get("difficulty"), m.get("first"), m.get("moves")
+        if not isinstance(mid, str) or not 0 < len(mid) <= 64:
+            raise ApiError("match.id must be a short string")
+        if diff not in DIFFICULTIES:
+            raise ApiError(f"match.difficulty must be one of {list(DIFFICULTIES)}")
+        if first not in ("human", "ai"):
+            raise ApiError("match.first must be 'human' or 'ai'")
+        if not isinstance(moves, list) or len(moves) > N_CELLS:
+            raise ApiError("match.moves must be a list of at most 49 cells")
+        if any(isinstance(x, bool) or not isinstance(x, int) for x in moves):
+            raise ApiError("match.moves must contain integers")
+        return {"id": mid, "difficulty": diff, "first": first, "moves": list(moves)}
 
-    def side_name(m: Match, side: int | None) -> str | None:
+    def replay(match: dict):
+        """Rebuild every state of the match. Raises ApiError if any move is illegal."""
+        state = new_game(HUMAN if match["first"] == "human" else AI)
+        states, flips = [state], []
+        for cell in match["moves"]:
+            try:
+                state, flipped = apply_move(state, cell)
+            except IllegalMoveError as exc:
+                raise ApiError(f"match history is invalid: {exc}") from exc
+            states.append(state)
+            flips.append(flipped)
+        return states, flips
+
+    def prob_trace(states) -> list[float]:
+        """Model's P(AI wins) after every move, scored in a single batch."""
+        out = [0.0] * len(states)
+        rows, idx = [], []
+        for k, st in enumerate(states):
+            if st.is_terminal():
+                w = st.winner()
+                out[k] = 1.0 if w == AI else 0.0 if w == HUMAN else 0.5
+            else:
+                rows.append(extract_features(st.board, st.to_move, AI))
+                idx.append(k)
+        if rows:
+            for k, p in zip(idx, predict_win_proba(bundle["model"], rows)):
+                out[k] = round(float(p), 4)
+        return out
+
+    def side_name(side: int | None) -> str | None:
         if side is None:
             return None
-        return "human" if side == m.human else "ai" if side == m.ai else "draw"
+        return "human" if side == HUMAN else "ai" if side == AI else "draw"
 
-    def serialize(m: Match, last=None) -> dict:
-        st = m.state
+    def serialize(match: dict, states, flips, last=None) -> dict:
+        st = states[-1]
         s = st.scores()
         over = st.is_terminal()
-        human_turn = not over and st.to_move == m.human
-        preview = ({str(i): flips_for(st.board, i, m.human) for i in st.legal_moves()}
-                   if human_turn else {})
+        human_turn = not over and st.to_move == HUMAN
+        trace = prob_trace(states)
+        events = [{"ply": k + 1, "by": side_name(states[k].to_move), "cell": cell, "flipped": flips[k],
+                   "ai_win_prob": trace[k + 1]}
+                  for k, cell in enumerate(match["moves"])]
         return {
-            "game_id": m.id,
-            "difficulty": m.difficulty,
-            "board": [v * m.human for v in st.board],  # +1 human, -1 AI, 0 empty
+            "match": match,
+            "difficulty": match["difficulty"],
+            "board": [v * HUMAN for v in st.board],  # +1 human, -1 AI, 0 empty
             "cores": sorted(CORES),
-            "to_move": None if over else side_name(m, st.to_move),
+            "to_move": None if over else side_name(st.to_move),
             "ply": st.ply,
-            "scores": {"human": s[m.human], "ai": s[m.ai]},
+            "scores": {"human": s[HUMAN], "ai": s[AI]},
             "over": over,
-            "winner": side_name(m, st.winner()) if over else None,
-            "preview": preview,
-            "ai_win_prob": m.prob_trace[-1] if m.prob_trace else 0.5,
-            "prob_trace": m.prob_trace,
-            "events": m.events[-60:],
+            "winner": side_name(st.winner()) if over else None,
+            "preview": {str(i): flips_for(st.board, i, HUMAN) for i in st.legal_moves()} if human_turn else {},
+            "ai_win_prob": trace[-1],
+            "prob_trace": trace,
+            "events": events,
             "last": last,
-            "model_version": bundle["version"] if bundle else None,
+            "model_version": bundle["version"],
         }
 
-    def record_move(m: Match, by: str, cell: int, flipped: list[int], extra: dict | None = None) -> dict:
-        p = ai_prob(m)
-        m.prob_trace.append(p)
-        ev = {"ply": m.state.ply, "by": by, "cell": cell, "flipped": flipped, "ai_win_prob": p}
-        if extra:
-            ev.update(extra)
-        m.events.append(ev)
-        if m.state.is_terminal():
-            log_match(m)
-        return ev
-
-    def log_match(m: Match):
-        if m.logged:
+    def log_match(match: dict, states, trace):
+        """Append a finished match to the local log used for retraining."""
+        if not log_matches:
             return
-        m.logged = True
-        s = m.state.scores()
-        first = m.human if m.events and m.events[0]["by"] == "human" else m.ai
+        st = states[-1]
+        s = st.scores()
         rec = {
-            "match_id": m.id,
+            "match_id": match["id"],
             "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "duration_s": round(time.time() - m.started_at, 1),
-            "difficulty": m.difficulty,
-            "human_side": m.human,
-            "first_player": first,
-            "moves": list(m.state.history),
-            "score_human": s[m.human],
-            "score_ai": s[m.ai],
-            "winner": side_name(m, m.state.winner()),
-            "model_version": bundle["version"] if bundle else None,
-            "ai_win_prob_trace": m.prob_trace,
+            "difficulty": match["difficulty"],
+            "human_side": HUMAN,
+            "first_player": HUMAN if match["first"] == "human" else AI,
+            "moves": match["moves"],
+            "score_human": s[HUMAN],
+            "score_ai": s[AI],
+            "winner": side_name(st.winner()),
+            "model_version": bundle["version"],
+            "ai_win_prob_trace": trace,
         }
         try:
             matches_path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,18 +169,11 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
         except OSError as exc:  # logging must never break the game
             app.logger.warning("could not log match: %s", exc)
 
-    def read_history() -> list[dict]:
-        if not matches_path.exists():
-            return []
-        out = []
-        for line in matches_path.read_text(encoding="utf-8").splitlines():
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # skip a corrupted line instead of failing the stats panel
-            if isinstance(rec, dict) and rec.get("winner") in ("human", "ai", "draw"):
-                out.append(rec)
-        return out
+    def respond(match, states, flips, last):
+        payload = serialize(match, states, flips, last)
+        if payload["over"]:
+            log_match(match, states, payload["prob_trace"])
+        return jsonify(payload)
 
     # ---- routes ----------------------------------------------------------------------
     @app.errorhandler(ApiError)
@@ -197,6 +207,7 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
             "model_loaded": bundle is not None,
             "error": model_error,
             "model": info,
+            "logging_matches": log_matches,
             "difficulties": {k: {"label": v["label"], "blurb": v["blurb"]} for k, v in DIFFICULTIES.items()},
         })
 
@@ -214,88 +225,58 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
             raise ApiError("first must be 'human', 'ai' or 'random'")
         if first == "random":
             first = rng.choice(["human", "ai"])
-        human = P1  # the human always plays colour +1; who moves first varies
-        st = new_game(human if first == "human" else P2)
-        m = Match(uuid.uuid4().hex, difficulty, human, st,
-                  ModelAgent(bundle, difficulty, random.Random(rng.random())))
-        m.prob_trace.append(ai_prob(m))
-        with lock:
-            matches[m.id] = m
-            while len(matches) > MAX_SESSIONS:
-                matches.popitem(last=False)
-        return jsonify(serialize(m))
-
-    @app.get("/api/game/<gid>")
-    def get_game(gid):
-        require_model()
-        return jsonify(serialize(get_match({"game_id": gid})))
+        match = {"id": uuid.uuid4().hex, "difficulty": difficulty, "first": first, "moves": []}
+        states, flips = replay(match)
+        return jsonify(serialize(match, states, flips))
 
     @app.post("/api/move")
     def human_move():
         require_model()
         data = body()
-        with lock:
-            m = get_match(data)
-            cell = data.get("cell")
-            if isinstance(cell, bool) or not isinstance(cell, int):
-                raise ApiError("cell must be an integer 0-48")
-            if m.state.is_terminal():
-                raise ApiError("the game is over", 409)
-            if m.state.to_move != m.human:
-                raise ApiError("it is not your turn", 409)
-            try:
-                m.state, flipped = apply_move(m.state, cell)
-            except IllegalMoveError as exc:
-                raise ApiError(str(exc)) from exc
-            ev = record_move(m, "human", cell, flipped)
-            return jsonify(serialize(m, last=ev))
+        match = parse_match(data)
+        cell = data.get("cell")
+        if isinstance(cell, bool) or not isinstance(cell, int):
+            raise ApiError("cell must be an integer 0-48")
+        states, flips = replay(match)
+        st = states[-1]
+        if st.is_terminal():
+            raise ApiError("the game is over", 409)
+        if st.to_move != HUMAN:
+            raise ApiError("it is not your turn", 409)
+        try:
+            nxt, flipped = apply_move(st, cell)
+        except IllegalMoveError as exc:
+            raise ApiError(str(exc)) from exc
+        match["moves"].append(cell)
+        states.append(nxt)
+        flips.append(flipped)
+        last = {"ply": nxt.ply, "by": "human", "cell": cell, "flipped": flipped}
+        return respond(match, states, flips, last)
 
     @app.post("/api/ai_move")
     def ai_move():
         require_model()
-        data = body()
-        with lock:
-            m = get_match(data)
-            if m.state.is_terminal():
-                raise ApiError("the game is over", 409)
-            if m.state.to_move != m.ai:
-                raise ApiError("it is not the AI's turn", 409)
-            d = m.agent.choose_with_info(m.state)
-            m.state, flipped = apply_move(m.state, d.move)
-            ev = record_move(m, "ai", d.move, flipped, {
-                "chosen_p": round(d.win_prob, 4),
-                "candidates": d.candidates[:5],
-                "all_candidates": d.candidates,
-                "method": d.method,
-                "think_ms": round(d.elapsed_ms, 1),
-            })
-            # Keep the full candidate list only on the response, not in the stored log.
-            stored = dict(ev)
-            stored.pop("all_candidates", None)
-            m.events[-1] = stored
-            return jsonify(serialize(m, last=ev))
-
-    @app.get("/api/stats")
-    def stats():
-        hist = read_history()
-        by_diff = {}
-        for d in DIFFICULTIES:
-            rs = [r for r in hist if r.get("difficulty") == d]
-            by_diff[d] = {"played": len(rs), "human_wins": sum(r["winner"] == "human" for r in rs)}
-        streak = 0
-        for r in reversed(hist):
-            if r["winner"] != "human":
-                break
-            streak += 1
-        recent = [{k: r.get(k) for k in ("finished_at", "difficulty", "score_human", "score_ai", "winner")}
-                  for r in hist[-10:]][::-1]
-        return jsonify({
-            "played": len(hist),
-            "human_wins": sum(r["winner"] == "human" for r in hist),
-            "ai_wins": sum(r["winner"] == "ai" for r in hist),
-            "by_difficulty": by_diff,
-            "win_streak": streak,
-            "recent": recent,
-        })
+        match = parse_match(body())
+        states, flips = replay(match)
+        st = states[-1]
+        if st.is_terminal():
+            raise ApiError("the game is over", 409)
+        if st.to_move != AI:
+            raise ApiError("it is not the AI's turn", 409)
+        agent = ModelAgent(bundle, match["difficulty"], random.Random(rng.random()))
+        d = agent.choose_with_info(st)
+        nxt, flipped = apply_move(st, d.move)
+        match["moves"].append(d.move)
+        states.append(nxt)
+        flips.append(flipped)
+        last = {
+            "ply": nxt.ply, "by": "ai", "cell": d.move, "flipped": flipped,
+            "chosen_p": round(d.win_prob, 4),
+            "candidates": d.candidates[:5],
+            "all_candidates": d.candidates,
+            "method": d.method,
+            "think_ms": round(d.elapsed_ms, 1),
+        }
+        return respond(match, states, flips, last)
 
     return app

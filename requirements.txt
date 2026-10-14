@@ -1,8 +1,7 @@
-# Tested with Python 3.14 on Windows 11.
-numpy>=2.0
-pandas>=2.2
-scikit-learn>=1.5
-joblib>=1.4
-flask>=3.0
-matplotlib>=3.8
-pytest>=8.0
+# Runtime dependencies (what the game server needs; Vercel installs these).
+# scikit-learn is pinned because the saved model only loads reliably with the
+# version that trained it.
+flask==3.1.3
+scikit-learn==1.9.1
+numpy==2.5.4
+joblib==1.6.0

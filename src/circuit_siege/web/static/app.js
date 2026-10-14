@@ -142,7 +142,7 @@ function render(game, last) {
 
   cells.forEach((cell, i) => {
     const v = game.board[i];
-    const before = prev && prev.game_id === game.game_id ? prev.board[i] : 0;
+    const before = sameMatch(prev, game) ? prev.board[i] : 0;
     let anim = null, delay = 0;
     if (i === origin) anim = "placed";
     else if (flippedSet.has(i)) {
@@ -151,7 +151,7 @@ function render(game, last) {
       const dc = Math.abs((i % SIZE) - (origin % SIZE));
       delay = 120 + 90 * Math.max(dr, dc);
     }
-    if (v !== before || anim || !prev || prev.game_id !== game.game_id) setNode(cell, v, anim, delay);
+    if (v !== before || anim || !sameMatch(prev, game)) setNode(cell, v, anim, delay);
     if (i === origin && !reducedMotion) ripple(cell, v);
 
     const legal = humanTurn && v === 0;
@@ -186,9 +186,13 @@ function render(game, last) {
   renderGauge(game.ai_win_prob);
   renderTrace(game.prob_trace);
   if (last && last.by === "ai") ui.lastAi = last;
-  if (!prev || prev.game_id !== game.game_id) ui.lastAi = null;
+  if (!sameMatch(prev, game)) ui.lastAi = null;
   renderDecision();
   renderRatings();
+}
+
+function sameMatch(a, b) {
+  return Boolean(a && b && a.match.id === b.match.id);
 }
 
 function ripple(cell, v) {
@@ -360,7 +364,7 @@ async function humanMove(i) {
   }
   ui.busy = true;
   try {
-    const next = await api("/api/move", { game_id: g.game_id, cell: i });
+    const next = await api("/api/move", { match: g.match, cell: i });
     render(next, next.last);
     if (next.last.flipped.length) toast(`You captured ${next.last.flipped.length} node${next.last.flipped.length > 1 ? "s" : ""}.`);
     if (next.over) { await sleep(900); return showEnd(next); }
@@ -380,7 +384,7 @@ async function aiTurn() {
   ui.busy = true;
   $("#turn").textContent = `AI is rating ${49 - g.ply} possible moves…`;
   try {
-    const [next] = await Promise.all([api("/api/ai_move", { game_id: g.game_id }), sleep(reducedMotion ? 0 : 450)]);
+    const [next] = await Promise.all([api("/api/ai_move", { match: g.match }), sleep(reducedMotion ? 0 : 450)]);
     render(next, next.last);
     const n = next.last.flipped.length;
     if (n) toast(`The AI captured ${n} of your nodes.`);
@@ -410,6 +414,7 @@ function showEnd(g) {
       note = `The model's lowest estimate for itself was ${pct(tr[k])}%, after move ${k + 1}.`;
     }
   }
+  saveResult(g);
   $("#end-note").textContent = note + " This match was saved to your history.";
   $("#end").hidden = false;
   $("#btn-rematch").focus();
@@ -458,10 +463,55 @@ function escapeHtml(t) {
   return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-async function fillStats() {
+/* Match history lives in this browser (localStorage), so it also works on a
+   serverless host. Running locally, the server additionally logs finished
+   matches to data/player_games/matches.jsonl for retraining. */
+const HISTORY_KEY = "circuit-siege-history";
+
+function loadHistory() {
+  try {
+    const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    return Array.isArray(h) ? h.filter((r) => r && ["human", "ai", "draw"].includes(r.winner)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function localTimestamp() {
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function saveResult(g) {
+  const hist = loadHistory();
+  if (hist.some((r) => r.id === g.match.id)) return;
+  hist.push({
+    id: g.match.id, finished_at: localTimestamp(), difficulty: g.difficulty,
+    score_human: g.scores.human, score_ai: g.scores.ai, winner: g.winner,
+  });
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(hist.slice(-200))); } catch { /* storage full or blocked */ }
+}
+
+function historyStats(hist) {
+  const by = {};
+  for (const d of ["easy", "normal", "hard"]) {
+    const rs = hist.filter((r) => r.difficulty === d);
+    by[d] = { played: rs.length, human_wins: rs.filter((r) => r.winner === "human").length };
+  }
+  let streak = 0;
+  for (let k = hist.length - 1; k >= 0 && hist[k].winner === "human"; k--) streak++;
+  return {
+    played: hist.length,
+    human_wins: hist.filter((r) => r.winner === "human").length,
+    ai_wins: hist.filter((r) => r.winner === "ai").length,
+    by_difficulty: by, win_streak: streak, recent: hist.slice(-10).reverse(),
+  };
+}
+
+function fillStats() {
   const body = $("#stats-body");
   try {
-    const s = await api("/api/stats");
+    const s = historyStats(loadHistory());
     if (!s.played) { body.innerHTML = '<p class="muted">No finished matches yet. Your results appear here after your first game.</p>'; return; }
     const labels = ui.status?.difficulties || {};
     const rows = ["easy", "normal", "hard"].filter((d) => s.by_difficulty[d]).map((d) => [d, s.by_difficulty[d]]).map(([d, v]) =>

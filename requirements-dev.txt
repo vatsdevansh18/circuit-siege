@@ -1,0 +1,5 @@
+# Everything needed to regenerate the data, train, evaluate and run the tests.
+-r requirements.txt
+pandas==3.0.6
+matplotlib==3.11.2
+pytest==9.1.1

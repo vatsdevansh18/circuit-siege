@@ -1,0 +1,11 @@
+# Only the game server is deployed; the dataset, reports and tooling stay out.
+.venv
+data
+reports
+tests
+docs
+scripts
+run_game.py
+requirements-dev.txt
+.claude-flow
+**/__pycache__
