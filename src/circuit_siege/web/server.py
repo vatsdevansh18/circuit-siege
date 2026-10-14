@@ -26,8 +26,10 @@ import json
 import os
 import random
 import secrets
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -40,6 +42,7 @@ from ..utils import paths
 
 STATIC_DIR = Path(__file__).parent / "static"
 HUMAN, AI = P1, P2  # the human always plays colour +1; who moves first varies
+MAX_TRACKED_MATCHES = 10_000  # newest-record map size (logging mode); oldest matches drop out first
 
 
 class ApiError(Exception):
@@ -83,6 +86,15 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
             if isinstance(rec, dict) and isinstance(rec.get("match_id"), str):
                 logged_ids.add(rec["match_id"])
 
+    # Where matches are logged (local runs), only the newest record issued for each
+    # match is accepted. Older records still carry valid signatures, so without this a
+    # player could rewind (take back moves) and the log would contain games that were
+    # never played straight through. The lock makes check-and-update atomic. The map
+    # lives in memory, so matches that were in progress when the server restarted (or
+    # that dropped out of the map) are refused and the player starts a new game.
+    latest: OrderedDict[str, str] = OrderedDict()
+    lock = threading.Lock()
+
     try:
         bundle, model_error = load_bundle(model_path), None
     except (ModelNotFoundError, ModelIncompatibleError) as exc:
@@ -99,8 +111,8 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
             raise ApiError("request body must be a JSON object")
         return data
 
-    def parse_match(data: dict) -> dict:
-        """Validate the match record sent by the browser."""
+    def parse_match(data: dict) -> tuple[dict, str | None]:
+        """Validate the match record sent by the browser. Returns (match, signature)."""
         m = data.get("match")
         if not isinstance(m, dict):
             raise ApiError("missing 'match' record; start a new game")
@@ -116,11 +128,38 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
         if any(isinstance(x, bool) or not isinstance(x, int) for x in moves):
             raise ApiError("match.moves must contain integers")
         clean = {"id": mid, "difficulty": diff, "first": first, "moves": list(moves)}
-        if key is not None:
-            sig = m.get("sig")
-            if not isinstance(sig, str) or not hmac.compare_digest(sig, sign(clean)):
-                raise ApiError("match record was modified or comes from another server; start a new game", 403)
-        return clean
+        if key is None:
+            return clean, None
+        sig = m.get("sig")
+        # Compare as bytes: compare_digest raises TypeError on non-ASCII str input.
+        if not isinstance(sig, str) or not hmac.compare_digest(sig.encode("utf-8"), sign(clean).encode()):
+            raise ApiError("match record was modified or comes from another server; start a new game", 403)
+        if log_matches:
+            newest = latest.get(mid)
+            if newest is None:
+                raise ApiError("this game is no longer active on the server (it may have restarted); "
+                               "start a new game", 409)
+            if not hmac.compare_digest(newest.encode(), sig.encode("utf-8")):
+                raise ApiError("this is an old game state (the move was already played); "
+                               "start a new game", 409)
+        return clean, sig
+
+    def remember(record: dict):
+        """Record the newest signed state of a match (logging mode only)."""
+        if not log_matches or "sig" not in record:
+            return
+        latest[record["id"]] = record["sig"]
+        latest.move_to_end(record["id"])
+        while len(latest) > MAX_TRACKED_MATCHES:
+            latest.popitem(last=False)
+
+    def ai_rng(sig: str | None) -> random.Random:
+        """The AI's sampling randomness, derived from the signed state when signing is on,
+        so sending the same state again can't 're-roll' the AI's choice."""
+        if key is None or sig is None:
+            return random.Random(rng.random())
+        digest = hmac.new(key, b"ai-move:" + sig.encode(), hashlib.sha256).digest()
+        return random.Random(int.from_bytes(digest[:8], "big"))
 
     def sign(match: dict) -> str:
         payload = json.dumps(match, sort_keys=True, separators=(",", ":"))
@@ -175,8 +214,10 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
         events = [{"ply": k + 1, "by": side_name(states[k].to_move), "cell": cell, "flipped": flips[k],
                    "ai_win_prob": trace[k + 1]}
                   for k, cell in enumerate(match["moves"])]
+        record = signed(match)
+        remember(record)
         return {
-            "match": signed(match),
+            "match": record,
             "difficulty": match["difficulty"],
             "board": [v * HUMAN for v in st.board],  # +1 human, -1 AI, 0 empty
             "cores": sorted(CORES),
@@ -284,7 +325,11 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
     def human_move():
         require_model()
         data = body()
-        match = parse_match(data)
+        with lock:
+            return _human_move(data)
+
+    def _human_move(data):
+        match, _ = parse_match(data)
         cell = data.get("cell")
         if isinstance(cell, bool) or not isinstance(cell, int):
             raise ApiError("cell must be an integer 0-48")
@@ -307,14 +352,19 @@ def create_app(model_path: Path | None = None, matches_path: Path | None = None,
     @app.post("/api/ai_move")
     def ai_move():
         require_model()
-        match = parse_match(body())
+        data = body()
+        with lock:
+            return _ai_move(data)
+
+    def _ai_move(data):
+        match, sig = parse_match(data)
         states, flips = replay(match)
         st = states[-1]
         if st.is_terminal():
             raise ApiError("the game is over", 409)
         if st.to_move != AI:
             raise ApiError("it is not the AI's turn", 409)
-        agent = ModelAgent(bundle, match["difficulty"], random.Random(rng.random()))
+        agent = ModelAgent(bundle, match["difficulty"], ai_rng(sig))
         d = agent.choose_with_info(st)
         nxt, flipped = apply_move(st, d.move)
         match["moves"].append(d.move)

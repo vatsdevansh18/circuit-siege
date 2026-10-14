@@ -39,7 +39,7 @@ the game works straight away. To rebuild everything from scratch:
 python scripts/generate_dataset.py   # simulate 8,000 games -> 384,000 positions (~1 min)
 python scripts/train_model.py        # train and compare 8 models, keep the best (~5 min)
 python scripts/evaluate_model.py     # test-set metrics, charts, AI vs bots (~12 min)
-python -m pytest                     # 85 tests
+python -m pytest                     # 91 tests
 ```
 
 All of it is seeded, so running these again gives the same dataset and the same splits.
@@ -243,7 +243,7 @@ Everything runs locally and doesn't need any API keys.
 
 ## Tests
 
-`python -m pytest` runs 85 tests. They cover:
+`python -m pytest` runs 91 tests. They cover:
 
 - the capture rules in every direction, illegal moves, scoring and game end
 - features matching between training and play, and the data checks

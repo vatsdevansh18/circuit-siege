@@ -98,13 +98,40 @@ def test_finished_match_is_logged_only_once(tiny_model_path, tmp_path):
         url = "/api/move"
     else:
         url = "/api/ai_move"
-    for _ in range(3):  # resend the final request
-        assert client.post(url, json=final).json["over"]
+    assert client.post(url, json=final).json["over"]
+    for _ in range(2):  # resending the final request is refused as a stale state
+        assert client.post(url, json=final).status_code == 409
     assert len(log.read_text().splitlines()) == 1
-    # a restarted server reads the existing log and still won't write it again
+    # a restarted server (same key, same log) doesn't accept the old match either
     restarted = make_client(tiny_model_path, log, log_matches=True, secret="k")
-    assert restarted.post(url, json=final).json["over"]
+    assert restarted.post(url, json=final).status_code == 409
     assert len(log.read_text().splitlines()) == 1
+
+
+def test_rewinding_to_an_earlier_state_is_refused_when_logging(client):
+    g0 = client.post("/api/new_game", json={"first": "human"}).json
+    g1 = client.post("/api/move", json={"match": g0["match"], "cell": 0}).json
+    assert g1["ply"] == 1
+    # take-back attempt: reuse the earlier (validly signed) record with another move
+    r = client.post("/api/move", json={"match": g0["match"], "cell": 5})
+    assert r.status_code == 409 and "old game state" in r.json["error"]
+    assert client.post("/api/ai_move", json={"match": g1["match"]}).status_code == 200
+
+
+def test_ai_choice_cannot_be_rerolled(tiny_model_path, tmp_path):
+    """Without logging (as on Vercel) old states are accepted, but resending the same
+    state always yields the same AI move, even on the most random level."""
+    c = make_client(tiny_model_path, tmp_path / "m.jsonl", log_matches=False, secret="k")
+    g = c.post("/api/new_game", json={"difficulty": "easy", "first": "ai"}).json
+    moves = {c.post("/api/ai_move", json={"match": g["match"]}).json["last"]["cell"] for _ in range(8)}
+    assert len(moves) == 1
+
+
+@pytest.mark.parametrize("sig", ["é" * 64, "\u0000", 123, None])
+def test_malformed_signatures_get_403_not_500(client, sig):
+    g = client.post("/api/new_game", json={"first": "human"}).json
+    r = client.post("/api/move", json={"match": dict(g["match"], sig=sig), "cell": 0})
+    assert r.status_code == 403
 
 
 def test_logging_requires_signing(tiny_model_path, tmp_path):
