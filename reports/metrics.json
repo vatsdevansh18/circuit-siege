@@ -1,0 +1,308 @@
+{
+  "model_version": "v20261014-082937",
+  "algorithm": "hist_gradient_boosting",
+  "params": {
+    "learning_rate": 0.05,
+    "max_leaf_nodes": 63,
+    "max_iter": 400,
+    "l2_regularization": 1.0
+  },
+  "test_rows": 57600,
+  "test_games": 1200,
+  "classification": {
+    "value_model": {
+      "accuracy": 0.7662,
+      "precision": 0.7634,
+      "recall": 0.768,
+      "f1": 0.7657,
+      "confusion_matrix": [
+        [
+          22125,
+          6820
+        ],
+        [
+          6647,
+          22008
+        ]
+      ],
+      "roc_auc": 0.8627,
+      "log_loss": 0.4524,
+      "brier": 0.1515
+    },
+    "baseline_score_leader": {
+      "accuracy": 0.634,
+      "precision": 0.6306,
+      "recall": 0.638,
+      "f1": 0.6343,
+      "confusion_matrix": [
+        [
+          18236,
+          10709
+        ],
+        [
+          10374,
+          18281
+        ]
+      ],
+      "roc_auc": 0.7064
+    },
+    "baseline_majority_class": {
+      "accuracy": 0.4975,
+      "precision": 0.4975,
+      "recall": 1.0,
+      "f1": 0.6644,
+      "confusion_matrix": [
+        [
+          0,
+          28945
+        ],
+        [
+          0,
+          28655
+        ]
+      ],
+      "roc_auc": 0.5,
+      "log_loss": 0.6931,
+      "brier": 0.25
+    }
+  },
+  "accuracy_by_phase": [
+    {
+      "phase": "opening (ply 1-12)",
+      "rows": 14400,
+      "model": 0.7028,
+      "score_leader": 0.4765
+    },
+    {
+      "phase": "early-mid (13-24)",
+      "rows": 14400,
+      "model": 0.736,
+      "score_leader": 0.5994
+    },
+    {
+      "phase": "late-mid (25-36)",
+      "rows": 14400,
+      "model": 0.7619,
+      "score_leader": 0.6731
+    },
+    {
+      "phase": "endgame (37-48)",
+      "rows": 14400,
+      "model": 0.8641,
+      "score_leader": 0.787
+    }
+  ],
+  "top_features": [
+    {
+      "feature": "opp_corners",
+      "importance": 0.1065
+    },
+    {
+      "feature": "my_corners",
+      "importance": 0.09903
+    },
+    {
+      "feature": "my_points",
+      "importance": 0.03868
+    },
+    {
+      "feature": "point_diff",
+      "importance": 0.03654
+    },
+    {
+      "feature": "opp_points",
+      "importance": 0.02776
+    },
+    {
+      "feature": "i_move_last",
+      "importance": 0.02002
+    },
+    {
+      "feature": "opp_vulnerable_pts",
+      "importance": 0.01199
+    },
+    {
+      "feature": "my_turn",
+      "importance": 0.00866
+    },
+    {
+      "feature": "opp_frontier",
+      "importance": 0.00846
+    },
+    {
+      "feature": "my_vulnerable_pts",
+      "importance": 0.00758
+    }
+  ],
+  "arena": {
+    "easy vs random": {
+      "games": 100,
+      "wins": 64,
+      "losses": 36,
+      "draws": 0,
+      "win_rate": 0.64,
+      "ci95": [
+        0.5424,
+        0.7273
+      ],
+      "avg_margin": 8.0,
+      "avg_ms_per_move": 7.04
+    },
+    "easy vs greedy": {
+      "games": 100,
+      "wins": 55,
+      "losses": 45,
+      "draws": 0,
+      "win_rate": 0.55,
+      "ci95": [
+        0.4524,
+        0.6439
+      ],
+      "avg_margin": 1.28,
+      "avg_ms_per_move": 7.17
+    },
+    "easy vs cautious": {
+      "games": 100,
+      "wins": 30,
+      "losses": 70,
+      "draws": 0,
+      "win_rate": 0.3,
+      "ci95": [
+        0.2189,
+        0.3959
+      ],
+      "avg_margin": -11.52,
+      "avg_ms_per_move": 7.02
+    },
+    "easy vs positional": {
+      "games": 100,
+      "wins": 7,
+      "losses": 93,
+      "draws": 0,
+      "win_rate": 0.07,
+      "ci95": [
+        0.0343,
+        0.1375
+      ],
+      "avg_margin": -31.26,
+      "avg_ms_per_move": 8.33
+    },
+    "normal vs random": {
+      "games": 100,
+      "wins": 100,
+      "losses": 0,
+      "draws": 0,
+      "win_rate": 1.0,
+      "ci95": [
+        0.963,
+        1.0
+      ],
+      "avg_margin": 39.98,
+      "avg_ms_per_move": 7.67
+    },
+    "normal vs greedy": {
+      "games": 100,
+      "wins": 100,
+      "losses": 0,
+      "draws": 0,
+      "win_rate": 1.0,
+      "ci95": [
+        0.963,
+        1.0
+      ],
+      "avg_margin": 37.02,
+      "avg_ms_per_move": 7.23
+    },
+    "normal vs cautious": {
+      "games": 100,
+      "wins": 100,
+      "losses": 0,
+      "draws": 0,
+      "win_rate": 1.0,
+      "ci95": [
+        0.963,
+        1.0
+      ],
+      "avg_margin": 32.78,
+      "avg_ms_per_move": 7.27
+    },
+    "normal vs positional": {
+      "games": 100,
+      "wins": 95,
+      "losses": 5,
+      "draws": 0,
+      "win_rate": 0.95,
+      "ci95": [
+        0.8882,
+        0.9785
+      ],
+      "avg_margin": 17.48,
+      "avg_ms_per_move": 8.29
+    },
+    "hard vs random": {
+      "games": 60,
+      "wins": 60,
+      "losses": 0,
+      "draws": 0,
+      "win_rate": 1.0,
+      "ci95": [
+        0.9398,
+        1.0
+      ],
+      "avg_margin": 43.2,
+      "avg_ms_per_move": 90.69
+    },
+    "hard vs greedy": {
+      "games": 60,
+      "wins": 60,
+      "losses": 0,
+      "draws": 0,
+      "win_rate": 1.0,
+      "ci95": [
+        0.9398,
+        1.0
+      ],
+      "avg_margin": 39.97,
+      "avg_ms_per_move": 82.35
+    },
+    "hard vs cautious": {
+      "games": 60,
+      "wins": 60,
+      "losses": 0,
+      "draws": 0,
+      "win_rate": 1.0,
+      "ci95": [
+        0.9398,
+        1.0
+      ],
+      "avg_margin": 34.77,
+      "avg_ms_per_move": 74.48
+    },
+    "hard vs positional": {
+      "games": 60,
+      "wins": 55,
+      "losses": 5,
+      "draws": 0,
+      "win_rate": 0.9167,
+      "ci95": [
+        0.8193,
+        0.9639
+      ],
+      "avg_margin": 21.1,
+      "avg_ms_per_move": 79.75
+    },
+    "hard vs normal": {
+      "games": 60,
+      "wins": 51,
+      "losses": 9,
+      "draws": 0,
+      "win_rate": 0.85,
+      "ci95": [
+        0.7389,
+        0.919
+      ],
+      "avg_margin": 13.9,
+      "avg_ms_per_move": 73.83
+    }
+  }
+}

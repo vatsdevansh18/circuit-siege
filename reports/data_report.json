@@ -1,0 +1,137 @@
+{
+  "rows": 384000,
+  "games": 8000,
+  "features": 68,
+  "missing_values": 0,
+  "duplicate_feature_rows": 30379,
+  "duplicate_rows_incl_label": 27901,
+  "label_balance": {
+    "0": 0.4999,
+    "1": 0.5001
+  },
+  "engineered_feature_stats": {
+    "my_points": {
+      "mean": 16.6,
+      "std": 10.764,
+      "min": 0.0,
+      "max": 58.0
+    },
+    "opp_points": {
+      "mean": 16.581,
+      "std": 10.762,
+      "min": 0.0,
+      "max": 58.0
+    },
+    "point_diff": {
+      "mean": 0.018,
+      "std": 14.849,
+      "min": -58.0,
+      "max": 58.0
+    },
+    "my_cores": {
+      "mean": 2.173,
+      "std": 1.506,
+      "min": 0.0,
+      "max": 5.0
+    },
+    "opp_cores": {
+      "mean": 2.167,
+      "std": 1.504,
+      "min": 0.0,
+      "max": 5.0
+    },
+    "my_corners": {
+      "mean": 1.254,
+      "std": 1.428,
+      "min": 0.0,
+      "max": 4.0
+    },
+    "opp_corners": {
+      "mean": 1.251,
+      "std": 1.426,
+      "min": 0.0,
+      "max": 4.0
+    },
+    "my_edges": {
+      "mean": 4.395,
+      "std": 4.021,
+      "min": 0.0,
+      "max": 20.0
+    },
+    "opp_edges": {
+      "mean": 4.402,
+      "std": 4.021,
+      "min": 0.0,
+      "max": 20.0
+    },
+    "my_frontier": {
+      "mean": 9.383,
+      "std": 6.269,
+      "min": 0.0,
+      "max": 37.0
+    },
+    "opp_frontier": {
+      "mean": 9.374,
+      "std": 6.276,
+      "min": 0.0,
+      "max": 37.0
+    },
+    "my_vulnerable_pts": {
+      "mean": 5.266,
+      "std": 5.325,
+      "min": 0.0,
+      "max": 38.0
+    },
+    "opp_vulnerable_pts": {
+      "mean": 5.247,
+      "std": 5.317,
+      "min": 0.0,
+      "max": 37.0
+    },
+    "my_best_gain": {
+      "mean": 6.654,
+      "std": 4.519,
+      "min": 1.0,
+      "max": 35.0
+    },
+    "opp_best_gain": {
+      "mean": 6.675,
+      "std": 4.535,
+      "min": 1.0,
+      "max": 35.0
+    },
+    "empties": {
+      "mean": 24.5,
+      "std": 13.853,
+      "min": 1.0,
+      "max": 48.0
+    },
+    "phase": {
+      "mean": 0.5,
+      "std": 0.283,
+      "min": 0.02,
+      "max": 0.98
+    },
+    "my_turn": {
+      "mean": 0.5,
+      "std": 0.5,
+      "min": 0.0,
+      "max": 1.0
+    },
+    "i_move_last": {
+      "mean": 0.5,
+      "std": 0.5,
+      "min": 0.0,
+      "max": 1.0
+    }
+  },
+  "seed": 42,
+  "split_games": {
+    "test": 1200,
+    "val": 1200,
+    "train": 5600
+  },
+  "first_player_win_rate": 0.5511,
+  "draws": 0,
+  "generation_seconds": 55.6
+}

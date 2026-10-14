@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Circuit Siege</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230e1013'/%3E%3Ccircle cx='11' cy='16' r='6' fill='%233d8bff'/%3E%3Ccircle cx='22' cy='16' r='6' fill='%23e5484d'/%3E%3C/svg%3E">
+</head>
+<body>
+  <div class="pcb-texture" aria-hidden="true"></div>
+
+  <!-- ============ START SCREEN ============ -->
+  <main id="screen-start" class="screen screen-start" aria-labelledby="title">
+    <section class="start-copy">
+      <p class="silk-ref">CS-77 rev A</p>
+      <h1 id="title" class="title">Circuit<br>Siege</h1>
+      <p class="lede">Claim nodes on a 7×7 circuit board. Trap a line of enemy nodes between two of
+        yours to capture it. Your opponent is a machine-learning model that learned to judge positions
+        from <span id="lede-rows">hundreds of thousands of</span> positions in
+        <span id="lede-games">thousands of</span> simulated games.</p>
+
+      <div id="model-banner" class="model-banner" hidden></div>
+
+      <fieldset class="choice" aria-describedby="diff-help">
+        <legend>Opponent</legend>
+        <div class="seg" role="radiogroup" id="difficulty-group">
+          <label class="seg-opt"><input type="radio" name="difficulty" value="easy"><span><b>Rookie</b><small>Loose sampling, makes mistakes</small></span></label>
+          <label class="seg-opt"><input type="radio" name="difficulty" value="normal" checked><span><b>Operator</b><small>Usually plays its best-rated move</small></span></label>
+          <label class="seg-opt"><input type="radio" name="difficulty" value="hard"><span><b>Architect</b><small>Checks your best reply first</small></span></label>
+        </div>
+        <p id="diff-help" class="hint">Every level uses the same trained model. Higher levels follow its ratings more strictly.</p>
+      </fieldset>
+
+      <fieldset class="choice">
+        <legend>First move</legend>
+        <div class="seg seg-small" role="radiogroup">
+          <label class="seg-opt"><input type="radio" name="first" value="human" checked><span><b>You</b></span></label>
+          <label class="seg-opt"><input type="radio" name="first" value="ai"><span><b>AI</b></span></label>
+          <label class="seg-opt"><input type="radio" name="first" value="random"><span><b>Coin flip</b></span></label>
+        </div>
+      </fieldset>
+
+      <div class="start-actions">
+        <button id="btn-start" class="btn btn-primary">Start match</button>
+        <button class="btn btn-ghost" data-open="dlg-rules">How to play</button>
+        <button class="btn btn-ghost" data-open="dlg-stats">Match history</button>
+        <button class="btn btn-ghost" data-open="dlg-model">About the AI</button>
+      </div>
+    </section>
+
+    <section class="start-art" aria-hidden="true">
+      <div class="board board-demo" id="demo-board"></div>
+    </section>
+  </main>
+
+  <!-- ============ GAME SCREEN ============ -->
+  <main id="screen-game" class="screen screen-game" hidden>
+    <header class="topbar">
+      <button class="brand" id="btn-menu" title="Back to menu">Circuit Siege</button>
+      <span class="chip" id="chip-diff">Operator</span>
+      <nav class="topnav">
+        <button class="btn btn-ghost btn-sm" data-open="dlg-rules">Rules</button>
+        <button class="btn btn-ghost btn-sm" data-open="dlg-stats">History</button>
+        <button class="btn btn-ghost btn-sm" data-open="dlg-model">About the AI</button>
+        <button class="btn btn-ghost btn-sm" id="btn-restart">Restart</button>
+      </nav>
+    </header>
+
+    <div class="layout">
+      <aside class="panel panel-left" aria-label="Score and moves">
+        <div class="scoreboard">
+          <div class="score score-human" id="score-human-wrap">
+            <span class="score-who"><i class="dot dot-human"></i>You</span>
+            <span class="score-val" id="score-human">0</span>
+          </div>
+          <div class="score score-ai" id="score-ai-wrap">
+            <span class="score-who"><i class="dot dot-ai"></i>AI</span>
+            <span class="score-val" id="score-ai">0</span>
+          </div>
+        </div>
+        <div class="score-bar" aria-hidden="true"><span id="bar-human"></span><span id="bar-ai"></span></div>
+        <p class="turn" id="turn" role="status" aria-live="polite">Your move</p>
+        <p class="sub" id="ply">Move 0 of 49. First to 30 points wins.</p>
+
+        <h2 class="panel-h">Move log</h2>
+        <ol class="log" id="log" aria-live="off"></ol>
+      </aside>
+
+      <section class="board-wrap">
+        <div class="board" id="board" role="grid" aria-label="Game board, 7 by 7"></div>
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </section>
+
+      <aside class="panel panel-right" aria-label="AI readout">
+        <h2 class="panel-h">AI readout</h2>
+        <div class="gauge">
+          <div class="gauge-num"><span id="ai-prob">50</span><small>%</small></div>
+          <p class="gauge-cap">The model's estimate that <b>the AI</b> wins from this position</p>
+          <div class="gauge-track"><span id="gauge-fill"></span><i class="gauge-mid"></i></div>
+        </div>
+
+        <div class="trace-wrap">
+          <svg id="trace" class="trace" viewBox="0 0 300 110" preserveAspectRatio="none" role="img" aria-label="AI win probability over the match"></svg>
+          <div class="trace-tip" id="trace-tip" hidden></div>
+          <div class="trace-axis"><span>start</span><span>move 49</span></div>
+        </div>
+
+        <h3 class="panel-h3">Last decision</h3>
+        <div id="decision" class="decision"><p class="muted">The AI hasn't moved yet.</p></div>
+
+        <label class="toggle">
+          <input type="checkbox" id="toggle-thinking">
+          <span class="toggle-ui"></span>
+          <span>Show the AI's ratings on the board</span>
+        </label>
+      </aside>
+    </div>
+  </main>
+
+  <!-- ============ END OVERLAY ============ -->
+  <div class="overlay" id="end" hidden>
+    <div class="end-card" role="dialog" aria-modal="true" aria-labelledby="end-title">
+      <p class="end-kicker" id="end-kicker">Match over</p>
+      <h2 id="end-title" class="end-title">You win</h2>
+      <p class="end-score" id="end-score"></p>
+      <p class="end-note" id="end-note"></p>
+      <div class="end-actions">
+        <button class="btn btn-primary" id="btn-rematch">Rematch</button>
+        <button class="btn btn-ghost" id="btn-review">Review board</button>
+        <button class="btn btn-ghost" id="btn-end-menu">Change settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DIALOGS ============ -->
+  <dialog id="dlg-rules" class="dlg">
+    <h2>How to play</h2>
+    <ol class="rules">
+      <li><b>Take turns placing a node</b> on any empty cell. You are blue, the AI is red.</li>
+      <li><b>Flank to capture.</b> If your new node and another of your nodes trap an unbroken line of enemy nodes between them, in any of the 8 directions, that whole line flips to you.
+        <div class="rule-fig" aria-hidden="true"><i class="n h"></i><i class="n a"></i><i class="n a"></i><i class="n new"></i><span>→</span><i class="n h"></i><i class="n h"></i><i class="n h"></i><i class="n h"></i></div></li>
+      <li><b>Cores are worth 3 points.</b> The five chip-shaped cells in a plus shape. Every other cell is worth 1.</li>
+      <li><b>The game ends when the board is full</b> (49 moves). There are 59 points in total, so 30 wins and a draw is impossible.</li>
+    </ol>
+    <h3>Tips</h3>
+    <ul class="tips">
+      <li>Corners can never be captured. Edges are hard to flank.</li>
+      <li>Hover a cell to preview its captures before you commit.</li>
+      <li>A big capture can leave a line open for an even bigger recapture.</li>
+    </ul>
+    <form method="dialog"><button class="btn btn-primary">Got it</button></form>
+  </dialog>
+
+  <dialog id="dlg-stats" class="dlg">
+    <h2>Match history</h2>
+    <div id="stats-body"><p class="muted">Loading…</p></div>
+    <p class="hint">Every finished match is saved to <code>data/player_games/matches.jsonl</code>. You can use these logs to retrain the model (see README → Adaptive mode).</p>
+    <form method="dialog"><button class="btn btn-primary">Close</button></form>
+  </dialog>
+
+  <dialog id="dlg-model" class="dlg dlg-wide">
+    <h2>About the AI</h2>
+    <div id="model-body"><p class="muted">Loading…</p></div>
+    <form method="dialog"><button class="btn btn-primary">Close</button></form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

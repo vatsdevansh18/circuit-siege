@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# personal match logs and archived models stay local
+data/player_games/
+models/archive/
+reports/_eval_log.txt
+# tool state written by editor hooks
+.claude-flow/

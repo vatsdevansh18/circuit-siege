@@ -1,0 +1,8 @@
+# Tested with Python 3.14 on Windows 11.
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.5
+joblib>=1.4
+flask>=3.0
+matplotlib>=3.8
+pytest>=8.0

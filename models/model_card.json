@@ -1,0 +1,127 @@
+{
+  "feature_names": "68 features (see src/circuit_siege/ai/features.py)",
+  "algorithm": "hist_gradient_boosting",
+  "params": {
+    "learning_rate": 0.05,
+    "max_leaf_nodes": 63,
+    "max_iter": 400,
+    "l2_regularization": 1.0
+  },
+  "metrics": {
+    "validation": {
+      "val_log_loss": 0.4449,
+      "val_accuracy": 0.7679,
+      "val_roc_auc": 0.8679
+    }
+  },
+  "trained_at": "2026-10-14T08:29:37",
+  "version": "v20261014-082937",
+  "train_rows": 326400,
+  "train_games": 6800,
+  "seed": 42,
+  "data_sources": [
+    "selfplay"
+  ],
+  "test_metrics": {
+    "accuracy": 0.7662,
+    "precision": 0.7634,
+    "recall": 0.768,
+    "f1": 0.7657,
+    "roc_auc": 0.8627,
+    "log_loss": 0.4524,
+    "brier": 0.1515
+  },
+  "arena": {
+    "easy vs random": {
+      "win_rate": 0.64,
+      "ci95": [
+        0.5424,
+        0.7273
+      ]
+    },
+    "easy vs greedy": {
+      "win_rate": 0.55,
+      "ci95": [
+        0.4524,
+        0.6439
+      ]
+    },
+    "easy vs cautious": {
+      "win_rate": 0.3,
+      "ci95": [
+        0.2189,
+        0.3959
+      ]
+    },
+    "easy vs positional": {
+      "win_rate": 0.07,
+      "ci95": [
+        0.0343,
+        0.1375
+      ]
+    },
+    "normal vs random": {
+      "win_rate": 1.0,
+      "ci95": [
+        0.963,
+        1.0
+      ]
+    },
+    "normal vs greedy": {
+      "win_rate": 1.0,
+      "ci95": [
+        0.963,
+        1.0
+      ]
+    },
+    "normal vs cautious": {
+      "win_rate": 1.0,
+      "ci95": [
+        0.963,
+        1.0
+      ]
+    },
+    "normal vs positional": {
+      "win_rate": 0.95,
+      "ci95": [
+        0.8882,
+        0.9785
+      ]
+    },
+    "hard vs random": {
+      "win_rate": 1.0,
+      "ci95": [
+        0.9398,
+        1.0
+      ]
+    },
+    "hard vs greedy": {
+      "win_rate": 1.0,
+      "ci95": [
+        0.9398,
+        1.0
+      ]
+    },
+    "hard vs cautious": {
+      "win_rate": 1.0,
+      "ci95": [
+        0.9398,
+        1.0
+      ]
+    },
+    "hard vs positional": {
+      "win_rate": 0.9167,
+      "ci95": [
+        0.8193,
+        0.9639
+      ]
+    },
+    "hard vs normal": {
+      "win_rate": 0.85,
+      "ci95": [
+        0.7389,
+        0.919
+      ]
+    }
+  }
+}
